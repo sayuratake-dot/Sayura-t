@@ -15,36 +15,14 @@ const {
 const _origWrite = process.stdout.write.bind(process.stdout);
 const _origErrWrite = process.stderr.write.bind(process.stderr);
 const SUPPRESS_PATTERNS = [
-  "Bad MAC",
-  "Failed to decrypt",
-  "Session error",
-  "Closing open session",
-  "Closing session",
-  "Decrypted message with closed session",
-  "closed session",
-  "SessionEntry",
-  "no session",
-  "No session",
-  "Invalid PreKey",
-  "decryptWithSessions",
-  "ephemeralKeyPair",
-  "lastRemoteEphemeralKey",
-  "pendingPreKey",
-  "remoteIdentityKey",
-  "currentRatchet",
-  "indexInfo",
-  "baseKeyType",
-  "_chains",
-  "registrationId",
-  "useNewUrlParser",
-  "useUnifiedTopology",
-  "MONGODB DRIVER",
-  "session_cipher",
-  "queue_job",
-  "verifyMAC",
-  "at async _asyncQueue",
-  "at async SessionCipher",
-  "at Object.verifyMAC",
+  "Bad MAC", "Failed to decrypt", "Session error", "Closing open session",
+  "Closing session", "Decrypted message with closed session", "closed session",
+  "SessionEntry", "no session", "No session", "Invalid PreKey",
+  "decryptWithSessions", "ephemeralKeyPair", "lastRemoteEphemeralKey",
+  "pendingPreKey", "remoteIdentityKey", "currentRatchet", "indexInfo",
+  "baseKeyType", "_chains", "registrationId", "useNewUrlParser",
+  "useUnifiedTopology", "MONGODB DRIVER", "session_cipher", "queue_job",
+  "verifyMAC", "at async _asyncQueue", "at async SessionCipher", "at Object.verifyMAC",
 ];
 
 function shouldSuppress(str) {
@@ -79,18 +57,12 @@ const P = require("pino");
 const path = require("path");
 const express = require("express");
 const config = require("./config");
-const { sms } = require("./lib/msg");
-const connectDB = require("./lib/mongodb");
-const { readEnv } = require("./lib/database");
 const mongoose = require("mongoose");
-const { File } = require("megajs"); // ✅ Mega
+const { File } = require("megajs");
 
-// ================= AntiDelete Module =================
-const antidelete = require("./plugins/antidelete");
-
-// ================= Auto Forward Module =================
-let handleAutoForward;
-try { handleAutoForward = require("./plugins/forward").handleAutoForward; } catch {}
+// ✅ lib modules — Mega download වෙන්ට පස්සේ load වෙනවා (lazy)
+let sms, connectDB, readEnv;
+let antidelete, handleAutoForward;
 
 // ================= Global Variables =================
 const ownerNumber = [config.OWNER_NUMBER || "94743826406"];
@@ -130,14 +102,13 @@ try {
 }
 
 // ====================== MEGA FOLDER DOWNLOADER ======================
-// ✅ ඔයාගේ Mega folder links මෙතනට දාන්න
 const MEGA_URLS = {
-  plugins:           "https://mega.nz/folder/YOUR_PLUGINS_LINK",   // ← මෙතන දාන්න
-  lib:               "https://mega.nz/folder/YOUR_LIB_LINK",        // ← මෙතන දාන්න
-  data:              "https://mega.nz/folder/YOUR_DATA_LINK",        // ← මෙතන දාන්න
-  cookies:           "https://mega.nz/folder/YOUR_COOKIES_LINK",    // ← මෙතන දාන්න
-  sessions:          "https://mega.nz/folder/YOUR_SESSIONS_LINK",   // ← මෙතන දාන්න
-  auth_info_baileys: "https://mega.nz/folder/YOUR_AUTH_LINK",       // ← මෙතන දාන්න
+  plugins:           "https://mega.nz/folder/oM0klaoZ#0pnKcGztfh6600bA_Zz0eA",
+  lib:               "https://mega.nz/folder/BcFzgIiT#JZ8AOSE9E4IpcyTu4Af6Zw",
+  data:              "https://mega.nz/folder/cFcVjQbY#dk5Soapw0t658YgGiVNlYQ",
+  cookies:           "https://mega.nz/folder/AZ8TBZZD#Wb7fj75P1lAVXhdGWd4FCw",
+  sessions:          "https://mega.nz/folder/EccBUb5S#gcuN6YS3IyrUonqXoaB9yA",
+  auth_info_baileys: "https://mega.nz/folder/9UsASAxB#coprmSKh57VRzUmesAbejw",
 };
 
 const BOT_FOLDERS = ["plugins", "lib", "data", "cookies", "sessions", "auth_info_baileys"];
@@ -147,7 +118,6 @@ function ensureDirSync(dir) {
 }
 
 async function downloadMegaNode(node, targetPath) {
-  // Folder නම් recursive ලෙස download
   if (node.directory) {
     ensureDirSync(targetPath);
     for (const child of (node.children || [])) {
@@ -156,10 +126,8 @@ async function downloadMegaNode(node, targetPath) {
     return;
   }
 
-  // File නම් download
   ensureDirSync(path.dirname(targetPath));
 
-  // Already exists & size ok නම් skip
   if (fs.existsSync(targetPath) && node.size) {
     if (fs.statSync(targetPath).size >= node.size) return;
   }
@@ -175,10 +143,8 @@ async function downloadMegaNode(node, targetPath) {
 }
 
 async function ensureBotFiles() {
-  // සියලු folders create කරනවා (crash නෑ)
   BOT_FOLDERS.forEach(f => ensureDirSync(path.join(__dirname, f)));
 
-  // Empty හෝ missing folders detect කරනවා
   const missing = BOT_FOLDERS.filter(f => {
     const full = path.join(__dirname, f);
     return !fs.existsSync(full) || fs.readdirSync(full).length === 0;
@@ -215,7 +181,6 @@ async function ensureBotFiles() {
     console.log("🎉 Bot folders downloaded successfully!");
   } catch (e) {
     console.log("❌ Mega download failed:", e.message);
-    // Download fail වුණාත් bot start කරනවා
   }
 }
 // ====================== END MEGA DOWNLOADER ======================
@@ -318,20 +283,11 @@ function extractBody(message) {
   if (!message) return "";
   const type = getContentType(message);
 
-  if (type === "conversation")
-    return message.conversation || "";
-
-  if (type === "extendedTextMessage")
-    return message.extendedTextMessage?.text || "";
-
-  if (type === "buttonsResponseMessage")
-    return message.buttonsResponseMessage?.selectedButtonId || "";
-
-  if (type === "listResponseMessage")
-    return message.listResponseMessage?.singleSelectReply?.selectedRowId || "";
-
-  if (type === "templateButtonReplyMessage")
-    return message.templateButtonReplyMessage?.selectedId || "";
+  if (type === "conversation") return message.conversation || "";
+  if (type === "extendedTextMessage") return message.extendedTextMessage?.text || "";
+  if (type === "buttonsResponseMessage") return message.buttonsResponseMessage?.selectedButtonId || "";
+  if (type === "listResponseMessage") return message.listResponseMessage?.singleSelectReply?.selectedRowId || "";
+  if (type === "templateButtonReplyMessage") return message.templateButtonReplyMessage?.selectedId || "";
 
   if (type === "interactiveResponseMessage") {
     try {
@@ -411,8 +367,7 @@ function buildFallback(options) {
 global.sendInteractiveButtons = async function (conn, jid, options, quotedMsg) {
   const _sid = options._sessionId;
   if (!global.isButtonEnabled(_sid)) {
-    const fallbackText = buildFallback(options);
-    return await conn.sendMessage(jid, { text: fallbackText }, { quoted: quotedMsg });
+    return await conn.sendMessage(jid, { text: buildFallback(options) }, { quoted: quotedMsg });
   }
 
   try {
@@ -459,10 +414,7 @@ global.sendInteractiveButtons = async function (conn, jid, options, quotedMsg) {
     }
 
     const interactiveMsg = generateWAMessageFromContent(jid, {
-      messageContextInfo: {
-        deviceListMetadata: {},
-        deviceListMetadataVersion: 2
-      },
+      messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
       interactiveMessage: proto.Message.InteractiveMessage.create({
         body:   proto.Message.InteractiveMessage.Body.create({ text: options.body || "" }),
         footer: proto.Message.InteractiveMessage.Footer.create({ text: options.footer || botName }),
@@ -477,17 +429,13 @@ global.sendInteractiveButtons = async function (conn, jid, options, quotedMsg) {
       })
     }, { quoted: quotedMsg, userJid: conn.user?.id });
 
-    await conn.relayMessage(jid, interactiveMsg.message, {
-      messageId: interactiveMsg.key.id
-    });
-
+    await conn.relayMessage(jid, interactiveMsg.message, { messageId: interactiveMsg.key.id });
     console.log("✅ Interactive button sent");
     return interactiveMsg;
 
   } catch (err) {
     console.error("❌ Interactive Button Error:", err.message);
-    const fallbackText = buildFallback(options);
-    return await conn.sendMessage(jid, { text: fallbackText }, { quoted: quotedMsg });
+    return await conn.sendMessage(jid, { text: buildFallback(options) }, { quoted: quotedMsg });
   }
 };
 
@@ -573,7 +521,7 @@ async function startBot(sessionId, credsJson, envConfig) {
   });
 
   conn.ev.on("messages.update", async (updates) => {
-    await antidelete.onDelete(conn, updates, sessionId);
+    if (antidelete) await antidelete.onDelete(conn, updates, sessionId);
   });
 
   conn.ev.on("messages.upsert", async (mkk) => {
@@ -594,8 +542,7 @@ async function startBot(sessionId, credsJson, envConfig) {
 
       if (!mek.message) return;
 
-      try { await antidelete.onMessage(conn, mek, sessionId); } catch {}
-
+      try { if (antidelete) await antidelete.onMessage(conn, mek, sessionId); } catch {}
       if (handleAutoForward) try { await handleAutoForward(conn, mek, sessionId); } catch {}
 
       const m = sms(conn, mek);
@@ -753,6 +700,22 @@ async function connectToWA() {
 
 // ================= START =================
 setTimeout(async () => {
-  await ensureBotFiles(); // ✅ Step 1: Mega folders download
-  await connectToWA();    // ✅ Step 2: Bot connect
+  // ✅ Step 1: Mega folders download (lib, plugins, etc.)
+  await ensureBotFiles();
+
+  // ✅ Step 2: lib modules lazy load — download වෙච්ච ගමන් require
+  try {
+    sms        = require("./lib/msg").sms;
+    connectDB  = require("./lib/mongodb");
+    readEnv    = require("./lib/database").readEnv;
+    antidelete = require("./plugins/antidelete");
+    try { handleAutoForward = require("./plugins/forward").handleAutoForward; } catch {}
+    console.log("✅ Lib modules loaded successfully.");
+  } catch (e) {
+    console.error("❌ Lib load error:", e.message);
+    process.exit(1);
+  }
+
+  // ✅ Step 3: Bot connect
+  await connectToWA();
 }, 4000);
